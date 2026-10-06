@@ -1,10 +1,14 @@
 {
-  "name": "tandem",
-  "owner": { "name": "nakadadev" },
-  "metadata": { "description": "One mod for running Claude Code chats side by side on the desktop" },
+  "name": "parallel-chats",
+  "owner": {
+    "name": "nakadadev"
+  },
+  "metadata": {
+    "description": "One mod for running Claude Code chats side by side on the desktop"
+  },
   "plugins": [
     {
-      "name": "tandem",
+      "name": "parallel-chats",
       "source": "./",
       "description": "Usage pace, same-file edits across chats, heavy builds taking turns, destructive commands refused, secrets hidden. Nothing to configure",
       "version": "0.1.0"

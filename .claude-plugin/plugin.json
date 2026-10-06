@@ -1,7 +1,9 @@
 {
-  "name": "tandem",
+  "name": "parallel-chats",
   "version": "0.1.0",
   "description": "Run several Claude Code chats side by side safely: where the week's usage lands at this pace, a question before two chats edit the same file, heavy builds taking turns, destructive commands refused and secrets hidden. Nothing to configure. English and Japanese",
-  "author": { "name": "nakadadev" },
-  "license": "MIT"
+  "author": {
+    "name": "nakadadev"
+  },
+  "license": "PolyForm-Noncommercial-1.0.0"
 }
