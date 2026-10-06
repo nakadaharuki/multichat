@@ -1,5 +1,5 @@
 {
-  "name": "parallel-chats",
+  "name": "multichat",
   "owner": {
     "name": "nakadadev"
   },
@@ -8,7 +8,7 @@
   },
   "plugins": [
     {
-      "name": "parallel-chats",
+      "name": "multichat",
       "source": "./",
       "description": "Usage pace, same-file edits across chats, heavy builds taking turns, destructive commands refused, secrets hidden. Nothing to configure",
       "version": "0.1.0"

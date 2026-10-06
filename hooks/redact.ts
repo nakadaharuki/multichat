@@ -318,7 +318,7 @@ export function makeConfig(options: Record<string, unknown>): Config {
   }
 }
 
-// parallel-chats: the hooks that used these live in register.tsx (a plugin has one hooks module).
+// multichat: the hooks that used these live in register.tsx (a plugin has one hooks module).
 // How many values have been hidden so far, so a hook can tell what one pass hid.
 export const hiddenCount = (): number => hidden
 export { walk }

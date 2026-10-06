@@ -1,4 +1,4 @@
-// parallel-chats: run several Claude Code chats side by side without them getting in each other's way.
+// multichat: run several Claude Code chats side by side without them getting in each other's way.
 //
 // Parallel chats share four things, and this mod looks after each, with nothing to switch:
 // - the plan's usage limits: the band says where the week and the 5 hours will land at this pace
@@ -25,7 +25,7 @@ const scrub = (text: string) => scrubPii(scrubSecrets(text, cfg), cfg)
 
 const MIN = 60_000
 const HOUR = 60 * MIN
-const PANE = 'parallel-chats'
+const PANE = 'multichat'
 const LIVE_MS = 2 * MIN // a chat whose heartbeat is older than this is closed
 const BEAT_MS = 30_000
 const RECENT_MS = 30 * MIN // another chat's edit this recent counts
@@ -37,7 +37,7 @@ const WINDOWS: Record<string, number> = { seven_day: 7 * 24 * HOUR, five_hour: 5
 
 const MESSAGES = {
   en: {
-    cmd: 'Open the parallel-chats pane: usage, the chats running side by side, and what was held or refused',
+    cmd: 'Open the multichat pane: usage, the chats running side by side, and what was held or refused',
     week: 'Week',
     fiveHour: '5h',
     context: 'Context',
@@ -53,7 +53,7 @@ const MESSAGES = {
     cancel: 'Cancel',
     cancelled: 'The user stopped this edit: another open chat ("{other}") changed {file} {ago} ago. Tell the user, and ask before touching the file again.',
     held: 'Held back: {n} other chats are already running heavy work ({kinds}) on this PC. Run this command again in 1 to 2 minutes, or do lighter work first.',
-    refused: 'parallel-chats refused this: {what}. If it is really needed, ask the user to run it themselves.',
+    refused: 'multichat refused this: {what}. If it is really needed, ask the user to run it themselves.',
     what: { 'rm-rf': 'rm -rf deletes a whole tree', 'force-push': 'a force push overwrites the remote', 'reset-hard': 'reset --hard throws away uncommitted work (other chats\' too)', 'clean-force': 'clean -f deletes untracked files (other chats\' too)' },
     ago: (m: number) => (m < 1 ? 'under a minute' : m < 60 ? `${m} min` : `${Math.floor(m / 60)} h`),
     left: (ms: number) => (ms >= 24 * HOUR ? `${Math.round(ms / (24 * HOUR))} d` : ms >= HOUR ? `${Math.round(ms / HOUR)} h` : `${Math.max(1, Math.round(ms / MIN))} min`),
@@ -71,7 +71,7 @@ const MESSAGES = {
     hidPrompt: 'hid {n} secret value(s) from the prompt',
   },
   ja: {
-    cmd: 'parallel-chats の欄を開く: 使用量・並行して動くチャット・止めたこと',
+    cmd: 'multichat の欄を開く: 使用量・並行して動くチャット・止めたこと',
     week: '週',
     fiveHour: '5時間',
     context: '文脈',
@@ -87,7 +87,7 @@ const MESSAGES = {
     cancel: 'やめる',
     cancelled: '利用者がこの編集を止めました。開いている別のチャット（「{other}」）が {ago}前に {file} を変更しています。利用者に伝え、このファイルに触る前に確かめてください。',
     held: '待ってもらいました: この PC で別のチャット {n} 本が重い処理（{kinds}）を走らせています。1〜2 分後にこのコマンドをもう一度走らせるか、先に軽い作業をしてください。',
-    refused: 'parallel-chats が止めました: {what}。どうしても要るなら、利用者に自分で走らせてもらってください。',
+    refused: 'multichat が止めました: {what}。どうしても要るなら、利用者に自分で走らせてもらってください。',
     what: { 'rm-rf': 'rm -rf は木ごと消す', 'force-push': '強制 push は遠くの履歴を上書きする', 'reset-hard': 'reset --hard は書きかけ（別のチャットの分も）を捨てる', 'clean-force': 'clean -f は追跡していないファイル（別のチャットの分も）を消す' },
     ago: (m: number) => (m < 1 ? '1分以内' : m < 60 ? `${m}分` : `${Math.floor(m / 60)}時間`),
     left: (ms: number) => (ms >= 24 * HOUR ? `${Math.round(ms / (24 * HOUR))}日` : ms >= HOUR ? `${Math.round(ms / HOUR)}時間` : `${Math.max(1, Math.round(ms / MIN))}分`),
@@ -244,7 +244,7 @@ async function edit($: EngineInterface, file: string, e: unknown, next: Next) {
     const params = { other: short(labelOf(clash.c), 40), file: base(path), ago: w().ago(Math.floor((now - clash.at) / MIN)) }
     let answer = ''
     try {
-      answer = await $.ui.ask(t('askEdit', params), { header: 'parallel-chats', options: [t('edit'), t('cancel')] })
+      answer = await $.ui.ask(t('askEdit', params), { header: 'multichat', options: [t('edit'), t('cancel')] })
     } catch {
       // nobody to ask, or the dialog was closed: do not edit
     }
@@ -305,7 +305,7 @@ export const register: Register = on => {
     $.clock.every(BEAT_MS, () => void tick($))
     await tick($)
     try {
-      await $.command.register({ name: 'chats', description: t('cmd'), immediate: true })
+      await $.command.register({ name: 'multichat', description: t('cmd'), immediate: true })
     } catch {
       // already registered by the load before a hot reload
     }
@@ -363,8 +363,8 @@ export const register: Register = on => {
   on('tool.call', { tool: 'Write' }, ($, e, next) => edit($, e.file_path, e, next as never))
   on('tool.call', { tool: 'NotebookEdit' }, ($, e, next) => edit($, e.notebook_path, e, next as never))
 
-  on('command.run', { command: 'chats' }, async $ => {
-    await $.ui.open({ id: PANE, title: 'parallel-chats' })
+  on('command.run', { command: 'multichat' }, async $ => {
+    await $.ui.open({ id: PANE, title: 'multichat' })
     return { text: '' }
   })
 
@@ -386,14 +386,14 @@ export const register: Register = on => {
         {p.text}
       </Text>
     ))
-    // the desktop app has room for the button that opens the pane; the terminal has /chats
+    // the desktop app has room for the button that opens the pane; the terminal has /multichat
     if (e.surface === 'desktop') {
       return (
         <Box flexDirection="row" alignItems="center">
           <Box flexGrow={1} flexDirection="row" flexWrap="wrap">
             {line}
           </Box>
-          <Button key="parallel-chats-open" label={t('details')} onPress={() => void $.ui.open({ id: PANE, title: 'parallel-chats' })} />
+          <Button key="multichat-open" label={t('details')} onPress={() => void $.ui.open({ id: PANE, title: 'multichat' })} />
         </Box>
       )
     }

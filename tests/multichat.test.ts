@@ -7,18 +7,18 @@ const MIN = 60_000
 const DAY = 24 * 60 * MIN
 
 const BAND = {
-  plugin: 'parallel-chats',
+  plugin: 'multichat',
   component: 'AbovePrompt',
   viewport: { columns: 120, rows: 30 },
   props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 120 },
 } as const
 
 const PANE = {
-  plugin: 'parallel-chats',
+  plugin: 'multichat',
   component: 'Pane',
-  requestId: 'parallel-chats',
+  requestId: 'multichat',
   viewport: { columns: 100, rows: 30 },
-  props: { title: 'parallel-chats', isFocused: true, bodyColumns: 60, placement: 'inline', scroll: { offset: 0, bodyRows: 20 }, view: {} },
+  props: { title: 'multichat', isFocused: true, bodyColumns: 60, placement: 'inline', scroll: { offset: 0, bodyRows: 20 }, view: {} },
 } as const
 
 // another open chat in the same checkout: edited src/app.ts 4 minutes ago and runs a build
@@ -81,7 +81,7 @@ test('the band: where the week lands, the chats, and a file two chats touch', as
     expect(await ui.find({ type: 'Text', text: /Context 31%/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /2 chats/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /app\.ts also changed in "Add rate limiting"/ })).toBeDefined()
-    expect(Boolean(await ui.find({ key: 'parallel-chats-open' }))).toBe(surface === 'desktop')
+    expect(Boolean(await ui.find({ key: 'multichat-open' }))).toBe(surface === 'desktop')
     await ui.unmount()
   }
 })
@@ -138,7 +138,7 @@ test('commands that throw work away are refused, in bash and PowerShell', async 
     ['PowerShell', 'Remove-Item dist -Recurse -Force'],
   ]) {
     const r: any = await $.tool.call({ tool, command } as never)
-    expect(String(r.text ?? r.deny)).toContain('parallel-chats refused this')
+    expect(String(r.text ?? r.deny)).toContain('multichat refused this')
   }
   const ok: any = await $.tool.call({ tool: 'Bash', command: 'rm build/old.log' } as never)
   expect(ok.result).toBe('ok')
