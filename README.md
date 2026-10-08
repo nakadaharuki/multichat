@@ -2,20 +2,16 @@
 
 One mod for running several Claude Code chats side by side on the desktop. Install it and it works: nothing to configure, nothing to switch.
 
-```
-Week 70% → 123% by reset (runs out 1 d before reset) · 5h 12% · Context 31% · 3 chats · 1 building · app.ts also changed in "Add rate limiting"   [Details]
-```
-
 Chats running at once share four things. multichat looks after each:
 
 | Shared | What multichat does |
 | --- | --- |
-| The plan's usage limits | The band says where the week will land at this pace, and turns red when it runs out before the reset |
+| The plan's usage limits | The pane says where the week will land at this pace, and turns red when it runs out before the reset |
 | The files | Before an edit, it asks when another open chat changed the same file in the last 30 minutes (Edit anyway / Cancel) |
 | The PC | A heavy command (install, build, test, type check) waits while two other chats already run one. After 3 holds in 10 minutes it goes through, so nothing is stuck |
 | The repository and your keys | `rm -rf`, force push, `reset --hard` and `clean -f` are refused (they throw away other chats' work too). Keys, emails and public IPs in what Claude reads become `[REDACTED-…]` placeholders, and go back to the real value in tool inputs |
 
-`/multichat` (or **Details** in the band) opens a pane with the usage, every chat on this PC and what was held or refused.
+`/multichat` opens a pane with the usage, every chat on this PC and what was held or refused.
 
 English and Japanese, following Claude Code's `language` setting.
 
@@ -54,11 +50,11 @@ claude plugin test .
 
 デスクトップ版 Claude Code で、チャットを何本も並べて走らせるための Mod です。入れるだけで動き、設定も切り替えもありません。
 
-- **使用量**: 帯に、このペースだと週の枠がリセット時に何 % になるかを出し、リセット前に尽きるなら赤くします
+- **使用量**: `/multichat` のペインに、このペースだと週の枠がリセット時に何 % になるかを出し、リセット前に尽きるなら赤くします
 - **ファイル**: 別のチャットが 30 分以内に変えたファイルを編集する前に聞きます（編集する／やめる）
 - **PC**: 別のチャットが 2 本重い処理（install・build・test・型検査）を走らせている間は、新しい重い処理を待たせます。10 分で 3 回待たせたら通します
 - **リポジトリと鍵**: `rm -rf`・強制 push・`reset --hard`・`clean -f` は止めます。Claude が読む結果の中の鍵・メール・公開 IP は伏せ字にし、道具に渡すときは元に戻します
 
-`/multichat`（帯の「詳しく」）で、使用量・この PC のチャット・止めたことを欄に出します。通信・ファイル・環境変数・外部プログラムは使いません。
+`/multichat` で、使用量・この PC のチャット・止めたことを欄に出します。通信・ファイル・環境変数・外部プログラムは使いません。
 
 ライセンス: [PolyForm Noncommercial 1.0.0](LICENSE.md)（個人など商用でない利用は自由）。`hooks/redact.ts` だけは Ray Amjad の secret-redactor で MIT（[LICENSE.secret-redactor](LICENSE.secret-redactor)）。

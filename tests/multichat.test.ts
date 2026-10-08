@@ -69,19 +69,15 @@ function boot(on: any, store: Map<string, unknown>, answer = 'Cancel') {
 
 const start = ($: any) => $.session.start({ surface: 'desktop', isInteractive: true, cwd: 'C:\\work' })
 
-test('the band: where the week lands, the chats, and a file two chats touch', async ($, on) => {
+test('no band above the prompt, even with another chat editing the same file', async ($, on) => {
   const store = new Map<string, unknown>([['chat:other', other()]])
   boot(on, store, 'Edit anyway')
   await start($)
-  await $.tool.call({ tool: 'Edit', file_path: 'C:\\work\\src\\app.ts', old_string: 'a', new_string: 'b' } as never)
+  await $.tool.call({ tool: 'Edit', file_path: 'C:/work/src/app.ts', old_string: 'a', new_string: 'b' } as never)
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...BAND, surface })
-    expect(await ui.find({ type: 'Text', text: /Week 70% → 123% by reset \(runs out 1 d before reset\)/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /5h 12%/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /Context 31%/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /2 chats/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /app\.ts also changed in "Add rate limiting"/ })).toBeDefined()
-    expect(Boolean(await ui.find({ key: 'multichat-open' }))).toBe(surface === 'desktop')
+    expect(await ui.find({ type: 'Text', text: /Week|Context|chats/ })).toBeUndefined()
+    expect(await ui.find({ key: 'multichat-open' })).toBeUndefined()
     await ui.unmount()
   }
 })

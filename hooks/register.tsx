@@ -1,7 +1,7 @@
 // multichat: run several Claude Code chats side by side without them getting in each other's way.
 //
 // Parallel chats share four things, and this mod looks after each, with nothing to switch:
-// - the plan's usage limits: the band says where the week and the 5 hours will land at this pace
+// - the plan's usage limits: the pane (/multichat) says where the week and the 5 hours will land at this pace
 // - the files: before an edit, it asks when another open chat changed the same file in the last 30 minutes
 // - the PC: a heavy command (install, build, test) waits while two other chats already run one
 // - the repository: commands that throw away work (rm -rf, force push, reset --hard, clean -f) are refused,
@@ -42,11 +42,7 @@ const MESSAGES = {
     fiveHour: '5h',
     context: 'Context',
     atReset: '→ {pct}% by reset',
-    over: 'runs out {when} before reset',
-    chats: '{n} chats',
     heavy: '{n} building',
-    clash: '{file} also changed in "{other}"',
-    details: 'Details',
     noUsage: 'Usage shows after the first reply',
     askEdit: '"{other}" changed {file} {ago} ago. Edit it here too?',
     edit: 'Edit anyway',
@@ -76,11 +72,7 @@ const MESSAGES = {
     fiveHour: '5時間',
     context: '文脈',
     atReset: '→ リセット時 {pct}%',
-    over: 'リセットの {when} 前に尽きる',
-    chats: '並行 {n}',
     heavy: '重い処理 {n}',
-    clash: '{file} を「{other}」も変更',
-    details: '詳しく',
     noUsage: '使用量は最初の返事の後に出ます',
     askEdit: '「{other}」が {ago}前に {file} を変更しました。ここでも編集しますか？',
     edit: '編集する',
@@ -264,35 +256,6 @@ async function edit($: EngineInterface, file: string, e: unknown, next: Next) {
 
 // ---- drawing ----
 
-function usageParts(): { text: string; color?: string }[] {
-  const parts: { text: string; color?: string }[] = []
-  for (const kind of ['seven_day', 'five_hour']) {
-    const l = limits.find(x => x.kind === kind)
-    if (!l) continue
-    const name = kind === 'seven_day' ? t('week') : t('fiveHour')
-    let text = `${name} ${Math.round(l.pct)}%`
-    let color: string | undefined
-    if (l.proj !== null && kind === 'seven_day') text += ` ${t('atReset', { pct: l.proj })}`
-    if (l.runsOutIn !== null && l.resetsAt !== null) {
-      text += ` (${t('over', { when: w().left(Math.max(0, l.resetsAt - lastNow - l.runsOutIn)) })})`
-      color = 'red'
-    } else if ((l.proj ?? l.pct) >= 85) color = 'yellow'
-    parts.push({ text, color })
-  }
-  if (context !== null) parts.push({ text: `${t('context')} ${context}%`, color: context >= 80 ? 'yellow' : undefined })
-  return parts
-}
-
-function clashLine(): string | null {
-  const now = lastNow
-  for (const [f, at] of Object.entries(me.files)) {
-    if (now - at > RECENT_MS) continue
-    const other = others.find(c => typeof c.files?.[f] === 'number' && now - c.files[f] <= RECENT_MS)
-    if (other) return t('clash', { file: base(f), other: short(labelOf(other), 24) })
-  }
-  return null
-}
-
 export const register: Register = on => {
 
   on('session.start', async ($, e, next) => {
@@ -366,38 +329,6 @@ export const register: Register = on => {
   on('command.run', { command: 'multichat' }, async $ => {
     await $.ui.open({ id: PANE, title: 'multichat' })
     return { text: '' }
-  })
-
-  // the band: one line, everything that matters across the chats
-  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (e.props.hasSurvey) return next(e)
-    const { Box, Text, Button } = $.ui.resolve(e)
-    const parts = usageParts()
-    const live = others.length + 1
-    const heavy = others.filter(c => c.heavy).length + (me.heavy ? 1 : 0)
-    if (live > 1) parts.push({ text: t('chats', { n: live }) })
-    if (heavy > 0) parts.push({ text: t('heavy', { n: heavy }), color: heavy >= HEAVY_AT_ONCE ? 'yellow' : undefined })
-    const clash = clashLine()
-    if (clash) parts.push({ text: clash, color: 'yellow' })
-    if (!parts.length) return next(e)
-    const line = parts.map((p, i) => (
-      <Text color={p.color} dimColor={!p.color}>
-        {i ? ' · ' : ''}
-        {p.text}
-      </Text>
-    ))
-    // the desktop app has room for the button that opens the pane; the terminal has /multichat
-    if (e.surface === 'desktop') {
-      return (
-        <Box flexDirection="row" alignItems="center">
-          <Box flexGrow={1} flexDirection="row" flexWrap="wrap">
-            {line}
-          </Box>
-          <Button key="multichat-open" label={t('details')} onPress={() => void $.ui.open({ id: PANE, title: 'multichat' })} />
-        </Box>
-      )
-    }
-    return <Box flexDirection="row" flexWrap="wrap">{line}</Box>
   })
 
   // the pane: the same three things in full
