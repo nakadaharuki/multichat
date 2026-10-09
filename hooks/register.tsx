@@ -16,12 +16,13 @@ import type { EngineInterface, Register, ToolCallResult } from 'claude-code'
 type Next = (e: never) => Promise<ToolCallResult<string>>
 import { cleanForce, commandsOf, forcePush, heavyKind, resetHard, rmRecursiveForce } from './guard'
 import type { Shell } from './guard'
-import { hiddenCount, makeConfig, restore, scrubPii, scrubSecrets, walk } from './redact'
+import { hiddenCount, makeConfig, protectToolCall, scrubPii, scrubSecrets, walk } from './redact'
 
 // Ray Amjad's secret-redactor (MIT, ./redact.ts) with its defaults: secrets, emails and public IPs
-// become [REDACTED-…] placeholders in what Claude reads, and go back to the real value in tool inputs
+// become [REDACTED-…] placeholders. Tool calls with placeholders are refused;
+// no secret value is retained or automatically restored into another tool.
 const cfg = makeConfig({})
-const scrub = (text: string) => scrubPii(scrubSecrets(text, cfg), cfg)
+const scrub = (text: string, parentKey?: string) => scrubPii(scrubSecrets(text, cfg, parentKey), cfg)
 
 const MIN = 60_000
 const HOUR = 60 * MIN
@@ -65,6 +66,9 @@ const MESSAGES = {
     untitled: 'new chat',
     hid: 'hid {n} secret value(s) from Claude',
     hidPrompt: 'hid {n} secret value(s) from the prompt',
+    unsafeInput: 'multichat refused an input containing a redaction placeholder or data it could not inspect. Use a tool with credentials configured outside the conversation.',
+    unsafeShell: 'multichat refused shell syntax it cannot safely inspect. Use a simple command without command substitutions.',
+    unsafePrompt: 'multichat withheld a prompt that could not be safely inspected.',
   },
   ja: {
     cmd: 'multichat の欄を開く: 使用量・並行して動くチャット・止めたこと',
@@ -95,6 +99,9 @@ const MESSAGES = {
     untitled: '新しいチャット',
     hid: '秘密の値を {n} 個伏せました',
     hidPrompt: 'プロンプトの秘密の値を {n} 個伏せました',
+    unsafeInput: '伏せ字を含む入力、または安全に検査できない入力を止めました。認証情報を会話の外で設定済みの道具を使ってください。',
+    unsafeShell: '安全に検査できないシェル構文を止めました。コマンド置換を含まない単純なコマンドを使ってください。',
+    unsafePrompt: '安全に検査できないプロンプトを伏せました。',
   },
 }
 type Lang = keyof typeof MESSAGES
@@ -195,7 +202,12 @@ const REFUSE: [keyof Words['what'], (words: string[]) => boolean][] = [
 ]
 
 async function shell($: EngineInterface, e: { command?: string }, next: Next, kind: Shell) {
-  const commands = commandsOf(String(e.command ?? ''), kind)
+  let commands: string[][]
+  try {
+    commands = commandsOf(String(e.command ?? ''), kind)
+  } catch {
+    return { deny: t('unsafeShell') }
+  }
   const hit = REFUSE.find(([, test]) => commands.some(test))
   if (hit) {
     const what = w().what[hit[0]]
@@ -279,7 +291,12 @@ export const register: Register = on => {
   // (a pasted key never reaches the model as itself, nor the label)
   on('prompt.submit', async ($, e, next) => {
     const before = hiddenCount()
-    const text = scrub(e.text)
+    let text: string
+    try {
+      text = walk(e.text, scrub) as string
+    } catch {
+      return next({ ...e, text: t('unsafePrompt') })
+    }
     if (hiddenCount() > before) $.ui.toast(t('hidPrompt', { n: hiddenCount() - before }))
     if (!me.label) me.label = short(text.replace(/\s+/g, ' ').trim(), 48)
     me.busy = true
@@ -289,21 +306,21 @@ export const register: Register = on => {
 
   // what a tool reads back: where a secret usually arrives (a cat of .env, a Read of a config)
   on('tool.call', async ($, e, next) => {
-    const r = await next(walk({ ...e }, restore) as typeof e)
-    if (r.deny !== undefined) return r
     const before = hiddenCount()
-    const result = walk(r.result, scrub)
-    const text = r.text === undefined ? undefined : scrub(r.text)
-    if (hiddenCount() === before) return r
-    $.ui.notice(e.tool_use_id, t('hid', { n: hiddenCount() - before }))
-    if (r.isError) return { isError: true as const, result, text, context: r.context }
-    return { result, context: r.context }
+    // Inspect the whole envelope, including text, context and denial details.
+    const r = await protectToolCall(e, next, scrub, t('unsafeInput'))
+    if (hiddenCount() > before) $.ui.notice(e.tool_use_id, t('hid', { n: hiddenCount() - before }))
+    return r
   })
 
   // the blocks on the first message (CLAUDE.md and friends): secrets only, the user's own email stays
   on('prompt.context', async ($, e, next) => {
-    const r = await next(e)
-    return { blocks: r.blocks.map(b => ({ ...b, text: scrubSecrets(b.text, cfg) })) }
+    try {
+      const r = await next(e)
+      return walk(r, (text, parentKey) => scrubSecrets(text, cfg, parentKey)) as typeof r
+    } catch {
+      return { blocks: [] }
+    }
   })
 
   on('turn.complete', async ($, e, next) => {

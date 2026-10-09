@@ -6,21 +6,16 @@
 // Keeps three classes of value out of the transcript: secrets, email
 // addresses and IP addresses.
 //
-// The value is not deleted. It is put in a vault that lives in this module,
-// in memory, for the session, and the transcript gets a placeholder in its
-// place: `[REDACTED-SECRET-1a2b3c4d]`. The same value always mints the same
-// placeholder, so the model can still tell one customer from another, and
-// the placeholder is swapped back for the real value on the way into a tool
-// call, so a `Bash` command or a `Write` still carries the real key.
-//
-// Nothing is written to disk. The vault dies with the session.
+// Each occurrence gets an opaque placeholder. No reverse mapping or secret
+// values are retained: a placeholder must never become a credential in a tool.
+// Tool calls containing placeholders are refused to avoid both disclosure and
+// accidentally writing a placeholder over a working credential.
 
 type Kind = 'SECRET' | 'EMAIL' | 'IP'
 
 export type Config = {
   secrets: boolean
   pii: boolean
-  restore: boolean
   notify: boolean
   minEntropy: number
   minLength: number
@@ -32,36 +27,14 @@ export type Config = {
   denyPrefix: readonly string[]
 }
 
-// ---------------------------------------------------------------- the vault
+// ------------------------------------------------------------- placeholders
 
-const byValue = new Map<string, string>()
-const byTag = new Map<string, string>()
 let hidden = 0
+const TAG = /\[REDACTED-/i
 
-const TAG = /\[REDACTED-(?:SECRET|EMAIL|IP)-[0-9a-f]{8}\]/g
-
-function fnv1a(text: string): string {
-  let h = 0x811c9dc5
-  for (let i = 0; i < text.length; i++) {
-    h ^= text.charCodeAt(i)
-    h = Math.imul(h, 0x01000193) >>> 0
-  }
-  return h.toString(16).padStart(8, '0')
-}
-
-function mint(kind: Kind, value: string): string {
+function mint(kind: Kind, _value: string): string {
   hidden++
-  const seen = byValue.get(value)
-  if (seen) return seen
-  const tag = `[REDACTED-${kind}-${fnv1a(value)}]`
-  byValue.set(value, tag)
-  byTag.set(tag, value)
-  return tag
-}
-
-export function restore(text: string): string {
-  if (byTag.size === 0) return text
-  return text.replace(TAG, (tag) => byTag.get(tag) ?? tag)
+  return `[REDACTED-${kind}-${hidden.toString(16).padStart(8, '0')}]`
 }
 
 // ------------------------------------------------------------ secret tests
@@ -187,7 +160,8 @@ function looksSecret(token: string, before: string, cfg: Config): boolean {
   return named && alnum && token.length >= 16 && h >= cfg.contextMinEntropy
 }
 
-export function scrubSecrets(text: string, cfg: Config): string {
+export function scrubSecrets(text: string, cfg: Config, parentKey?: string): string {
+  const prefix = parentKey === undefined ? '' : `${JSON.stringify(parentKey).slice(-64)}:`
   let out = text
   out = out.replace(PRIVATE_KEY, (m) => mint('SECRET', m))
   out = out.replace(VENDOR, (m) => (cfg.allow.has(m) ? m : mint('SECRET', m)))
@@ -195,7 +169,8 @@ export function scrubSecrets(text: string, cfg: Config): string {
     cfg.allow.has(password) ? m : `${head}:${mint('SECRET', password)}@`,
   )
   out = out.replace(CANDIDATE, (token: string, offset: number, whole: string) => {
-    const before = whole.slice(Math.max(0, offset - 64), offset)
+    // JSON objects must retain the same named-secret context as textual JSON.
+    const before = offset < 64 ? (prefix + whole.slice(0, offset)).slice(-64) : whole.slice(offset - 64, offset)
     return looksSecret(token, before, cfg) ? mint('SECRET', token) : token
   })
   return out
@@ -261,24 +236,93 @@ export function scrubPii(text: string, cfg: Config): string {
 
 // ------------------------------------------------------------- the walkers
 
-const SKIP_KEYS = new Set(['data', 'base64', 'b64_json', 'imageData', 'thumbnail'])
 const MAX_STRING = 8_000_000
 const MAX_DEPTH = 12
+const MAX_NODES = 100_000
 
-function walk(value: unknown, fn: (s: string) => string, depth = 0): unknown {
-  if (typeof value === 'string') return value.length > MAX_STRING ? value : fn(value)
-  if (depth >= MAX_DEPTH) return value
-  if (Array.isArray(value)) return value.map((v) => walk(v, fn, depth + 1))
-  if (value && typeof value === 'object') {
-    const proto = Object.getPrototypeOf(value)
-    if (proto !== Object.prototype && proto !== null) return value
-    const out: Record<string, unknown> = {}
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      out[k] = SKIP_KEYS.has(k) ? v : walk(v, fn, depth + 1)
+// Never return an uninspected subtree. Callers must withhold the entire result
+// on failure. Inspect JSON keys too, and do not invoke getters or toJSON hooks.
+function walk(value: unknown, fn: (s: string, parentKey?: string) => string): unknown {
+  let nodes = 0
+  let characters = 0
+  const visit = (v: unknown, depth: number, parentKey?: string): unknown => {
+    if (++nodes > MAX_NODES || depth > MAX_DEPTH) throw new Error('Inspection limit')
+    if (typeof v === 'string') {
+      characters += v.length
+      if (characters > MAX_STRING) throw new Error('Inspection limit')
+      return fn(v, parentKey)
+    }
+    if (v === null || v === undefined || typeof v === 'number' || typeof v === 'boolean') return v
+    if (typeof v !== 'object') throw new Error('Unsupported result')
+    const array = Array.isArray(v)
+    if (array && v.length > MAX_NODES) throw new Error('Inspection limit')
+    const proto = Object.getPrototypeOf(v)
+    if (array ? proto !== Array.prototype : proto !== Object.prototype && proto !== null) throw new Error('Unsupported result')
+    const out: Record<string, unknown> | unknown[] = array ? new Array(v.length) : {}
+    for (const k of Reflect.ownKeys(v)) {
+      if (typeof k !== 'string') throw new Error('Unsupported result')
+      const prop = Object.getOwnPropertyDescriptor(v, k)
+      if (!prop || !('value' in prop)) throw new Error('Unsupported result')
+      if (array && k === 'length') continue
+      // The host marks its results with a hidden `then: undefined` so they are not taken
+      // for promises. No text can hide in an undefined or a function, and the copy leaves
+      // them out, so dropping them beats withholding every result.
+      if (!prop.enumerable && (prop.value === undefined || typeof prop.value === 'function')) continue
+      // A tool can read non-enumerable properties even though JSON omits them.
+      if (!prop.enumerable || (array && !/^(0|[1-9][0-9]*)$/.test(k))) throw new Error('Unsupported result')
+      const key = visit(k, depth + 1) as string
+      Object.defineProperty(out, key, { value: visit(prop.value, depth + 1, array ? parentKey : k), enumerable: true, writable: true, configurable: true })
     }
     return out
   }
-  return value
+  return visit(value, 0)
+}
+
+function inspectedToolInput(value: unknown): unknown {
+  return walk(value, text => {
+    if (TAG.test(text)) throw new Error('Redacted input')
+    return text
+  })
+}
+
+export function safeToolInput(value: unknown): boolean {
+  try {
+    inspectedToolInput(value)
+    return true
+  } catch {
+    return false
+  }
+}
+
+// The fallback contains no part of the original result or exception.
+export function protectToolResult<T>(value: T, scrub: (s: string, parentKey?: string) => string): T | { isError: true; result: string; text: string } {
+  try {
+    return walk(value, scrub) as T
+  } catch {
+    const text = 'multichat withheld a tool result that could not be safely inspected.'
+    return { isError: true, result: text, text }
+  }
+}
+
+export async function protectToolCall<E, R>(
+  event: E,
+  next: (event: E) => Promise<R>,
+  scrub: (s: string, parentKey?: string) => string,
+  denied = 'multichat refused an input containing a redaction placeholder or data it could not inspect.',
+): Promise<R | { deny: string } | { isError: true; result: string; text: string }> {
+  let inspected: E
+  try {
+    inspected = inspectedToolInput(event) as E
+  } catch {
+    return { deny: denied }
+  }
+  try {
+    // Only the inspected copy reaches the tool, never the original object.
+    return protectToolResult(await next(inspected), scrub)
+  } catch {
+    const text = 'multichat withheld a tool failure that could not be safely inspected.'
+    return { isError: true, result: text, text }
+  }
 }
 
 // ---------------------------------------------------------------- register
@@ -305,7 +349,6 @@ export function makeConfig(options: Record<string, unknown>): Config {
   return {
     secrets: bool(options.secrets, true),
     pii: bool(options.pii, true),
-    restore: bool(options.restoreInToolInputs, true),
     notify: bool(options.notify, true),
     minEntropy: num(options.minEntropy, 3.6),
     minLength: Math.max(8, num(options.minLength, 24)),

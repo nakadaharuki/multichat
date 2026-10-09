@@ -1,16 +1,44 @@
 // Reads a shell command the way the shell will: quotes and escapes resolved, wrappers
 // (sudo, env, timeout, xargs, find -exec) skipped, bash -c "…" and pwsh -Command "…" read again.
 // It sees the command text only: a script file, an alias or cmd /c gets through.
+// Active command substitutions and malformed quotes are rejected, not guessed.
 
 export type Shell = 'bash' | 'powershell'
+
+function assertInspectable(command: string, shell: Shell) {
+  // Removing a Bash continuation can join tokens or create a substitution.
+  // Refuse it conservatively (even in quoted text) rather than insert a space.
+  if (shell === 'bash' && /\\\r?\n/.test(command)) throw new Error('Bash line continuation is not supported')
+  let quote = ''
+  const escape = shell === 'bash' ? '\\' : '`'
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i]
+    if (quote === "'") {
+      if (c === "'") quote = ''
+      continue
+    }
+    if (c === escape && i + 1 < command.length && (!quote || shell === 'powershell' || /[$`"\\\n\r]/.test(command[i + 1]))) {
+      i++
+      continue
+    }
+    if ((c === '$' && command[i + 1] === '(') || (shell === 'bash' && c === '`')) {
+      throw new Error('Command substitution is not supported')
+    }
+    if (c === quote) quote = ''
+    else if (!quote && (c === '"' || c === "'")) quote = c
+  }
+  if (quote) throw new Error('Unclosed shell quote')
+}
 
 
 // A command line split into simple commands, each a list of words with quotes and
 // escapes resolved. Splits at ; & | newlines and ` in bash. A line ending in the
-// escape character (\ in bash, ` in PowerShell) continues on the next. A quoted
+// escape character in PowerShell continues on the next; Bash continuations
+// have already been refused. A quoted
 // string with spaces stays one word. What stands inside ( ), $( ) or { } is read
 // twice: as part of the command around it (`rm (Join-Path a b) -Recurse -Force`)
-// and as a command of its own (`echo $(rm -rf x)`, `% { rm $_ -Recurse -Force }`).
+// and as a command of its own (`% { rm $_ -Recurse -Force }`). Command
+// substitutions are refused before this tokenizer, including inside quotes.
 const simpleCommands = (command: string, shell: Shell): string[][] => {
   const out: string[][] = []
   let words: string[] = []
@@ -30,7 +58,7 @@ const simpleCommands = (command: string, shell: Shell): string[][] => {
     nested = []
   }
   const escape = shell === 'bash' ? '\\' : '`'
-  const s = command.replace(shell === 'bash' ? /\\\r?\n/g : /`\r?\n/g, ' ')
+  const s = shell === 'bash' ? command : command.replace(/`\r?\n/g, ' ')
   for (let i = 0; i < s.length; i++) {
     const c = s[i]
     if (quote) {
@@ -56,20 +84,23 @@ const simpleCommands = (command: string, shell: Shell): string[][] => {
 // A shell started from this one runs a string of its own: that string is read again
 // with the inner shell's grammar. (cmd /c and a script file are not followed.)
 const SHELLS: Record<string, [(word: string) => boolean, Shell]> = {
-  bash: [w => w === '-c', 'bash'],
-  sh: [w => w === '-c', 'bash'],
-  zsh: [w => w === '-c', 'bash'],
-  dash: [w => w === '-c', 'bash'],
+  bash: [w => /^-[A-Za-z]*c[A-Za-z]*$/.test(w), 'bash'],
+  sh: [w => /^-[A-Za-z]*c[A-Za-z]*$/.test(w), 'bash'],
+  zsh: [w => /^-[A-Za-z]*c[A-Za-z]*$/.test(w), 'bash'],
+  dash: [w => /^-[A-Za-z]*c[A-Za-z]*$/.test(w), 'bash'],
   pwsh: [w => w.length >= 2 && '-command'.startsWith(w.toLowerCase()), 'powershell'],
   powershell: [w => w.length >= 2 && '-command'.startsWith(w.toLowerCase()), 'powershell'],
 }
-export const commandsOf = (command: string, shell: Shell): string[][] =>
-  simpleCommands(command, shell).flatMap(words => {
+export const commandsOf = (command: string, shell: Shell, depth = 0): string[][] => {
+  if (depth > 8 || command.length > 100_000) throw new Error('Shell inspection limit')
+  assertInspectable(command, shell)
+  return simpleCommands(command, shell).flatMap(words => {
     const i = commandIndex(words)
     const inner = i < 0 ? undefined : SHELLS[program(words[i])]
     const at = inner ? words.findIndex((w, k) => k > i && inner[0](w)) : -1
-    return at < 0 || at + 1 >= words.length ? [words] : [words, ...commandsOf(words[at + 1], inner![1])]
+    return at < 0 || at + 1 >= words.length ? [words] : [words, ...commandsOf(words[at + 1], inner![1], depth + 1)]
   })
+}
 
 // Words that run the command after them, and the options of theirs that take a value.
 const WRAPPERS: Record<string, RegExp | null> = {

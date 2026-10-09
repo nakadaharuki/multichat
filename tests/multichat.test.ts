@@ -149,6 +149,30 @@ test('a key read back from a tool reaches Claude as a placeholder', async ($, on
   expect(String(r.result)).toMatch(/API_KEY=\[REDACTED-SECRET-[0-9a-f]{8}\]/)
 })
 
+test('JSON data results are scrubbed and placeholders cannot reach Write', async ($, on) => {
+  // This dummy hex needs the parent token key; vendor-shape fixtures alone miss that regression.
+  const fake = '1a2b3c4d5e6f7890a1b2c3d4e5f60789'
+  let writes = 0
+  on('tool.call', { tool: 'Read' }, () => ({ result: { data: { token: fake } } }))
+  on('tool.call', { tool: 'Write' }, () => { writes++; return { result: 'ok' } })
+  boot(on, new Map())
+  await start($)
+  const r: any = await $.tool.call({ tool: 'Read', file_path: 'C:/work/fixture.json' } as never)
+  expect(String(r.result.data.token)).toMatch(/\[REDACTED-SECRET-[0-9a-f]+\]/)
+  const blocked: any = await $.tool.call({ tool: 'Write', file_path: 'C:/work/output.json', content: r.result.data.token } as never)
+  expect(writes).toBe(0)
+  expect(String(blocked.deny ?? blocked.text)).toContain('multichat refused')
+})
+
+test('quoted command substitution and bash -lc are refused by the shell hook', async ($, on) => {
+  boot(on, new Map())
+  await start($)
+  for (const command of ['echo "$(rm -rf scratch)"', 'bash -lc "rm -rf scratch"', 'echo "$' + String.fromCharCode(92, 10) + '(printf harmless)"']) {
+    const r: any = await $.tool.call({ tool: 'Bash', command } as never)
+    expect(String(r.deny ?? r.text)).toContain('multichat refused')
+  }
+})
+
 test('the pane lists usage, chats and what was refused', async ($, on) => {
   const store = new Map<string, unknown>([['chat:other', other()]])
   boot(on, store)
